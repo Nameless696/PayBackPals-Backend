@@ -4,7 +4,7 @@
  */
 const { Resend } = require('resend');
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = new Resend(process.env.RESEND_API_KEY || 'unconfigured_fallback_key');
 
 exports.sendEmail = async (req, res, next) => {
     try {

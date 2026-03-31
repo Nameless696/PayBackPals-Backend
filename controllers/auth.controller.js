@@ -11,7 +11,7 @@ const jwt      = require('jsonwebtoken');
 const { Resend } = require('resend');
 const User     = require('../models/User');
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = new Resend(process.env.RESEND_API_KEY || 'unconfigured_fallback_key');
 
 // ── Helper: sign JWT ──────────────────────────────────────────────
 const signToken = (id) =>
