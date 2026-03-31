@@ -30,6 +30,7 @@ const emailRoutes        = require('./routes/email.routes');
 connectDB();
 
 const app = express();
+app.set('trust proxy', 1);
 
 // ── Security & Parsing ────────────────────────────────────────────
 app.use(helmet({ contentSecurityPolicy: false }));
