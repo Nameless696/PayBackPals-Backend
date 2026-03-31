@@ -7,9 +7,11 @@
  * GET  /api/auth/me
  * PATCH /api/auth/profile
  */
-const jwt        = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
-const User       = require('../models/User');
+const jwt      = require('jsonwebtoken');
+const { Resend } = require('resend');
+const User     = require('../models/User');
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // ── Helper: sign JWT ──────────────────────────────────────────────
 const signToken = (id) =>
@@ -20,20 +22,15 @@ const makeCode = () => String(Math.floor(100000 + Math.random() * 900000));
 
 // ── Helper: send verification email ──────────────────────────────
 async function sendVerificationEmail(email, name, code) {
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-        console.warn('[Auth] Email credentials not set — skipping verification email');
+    if (!process.env.RESEND_API_KEY) {
+        console.warn('[Auth] RESEND_API_KEY missing - skipping email');
         return;
     }
-    const transporter = nodemailer.createTransport({
-        host:   process.env.EMAIL_HOST || 'smtp.gmail.com',
-        port:   Number(process.env.EMAIL_PORT) || 587,
-        secure: process.env.EMAIL_SECURE === 'true',
-        auth:   { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-    });
+    
     try {
-        await transporter.sendMail({
-            from:    process.env.EMAIL_FROM || process.env.EMAIL_USER,
-            to:      email,
+        const { data, error } = await resend.emails.send({
+            from: 'PayBackPal <onboarding@resend.dev>',
+            to: email, // Resend free tier strictly routes to verified accounts
             subject: 'Your PayBackPal verification code',
             html: `
                 <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;">
@@ -46,12 +43,13 @@ async function sendVerificationEmail(email, name, code) {
                 </div>
             `,
         });
-        console.log(`[Auth] Verification code sent to ${email}`);
-    } catch (mailError) {
-        console.error(`\n[Auth] === SMTP EMAIL FAILED ===`);
-        console.error(`Google rejected the login. But don't worry, here is your code:`);
-        console.error(`>>> YOUR VERIFICATION CODE IS: ${code} <<<`);
-        console.error(`\n(Please copy the code above to verify your account in the app)\n`);
+        
+        if (error) throw new Error(error.message);
+        console.log(`[Auth] Resend Email Executed for ${email}: ${data.id}`);
+    } catch (err) {
+        console.error(`\n[Auth] === RESEND API FAILED ===`);
+        console.error(`Error: ${err.message}`);
+        console.error(`>>> YOUR CODE IS: ${code} <<<\n`);
     }
 }
 

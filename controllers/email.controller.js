@@ -2,23 +2,9 @@
  * PayBackPal — Email Controller (Nodemailer)
  * POST /api/emails/send
  */
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
-let transporter = null;
-
-function getTransporter() {
-    if (transporter) return transporter;
-    transporter = nodemailer.createTransport({
-        host:   process.env.EMAIL_HOST   || 'smtp.gmail.com',
-        port:   Number(process.env.EMAIL_PORT) || 587,
-        secure: process.env.EMAIL_SECURE === 'true',
-        auth: {
-            user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASS,
-        },
-    });
-    return transporter;
-}
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 exports.sendEmail = async (req, res, next) => {
     try {
@@ -27,21 +13,23 @@ exports.sendEmail = async (req, res, next) => {
             return res.status(400).json({ message: 'to and subject are required' });
         }
 
-        if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-            console.warn('[Email] EMAIL_USER or EMAIL_PASS not set — skipping send');
+        if (!process.env.RESEND_API_KEY) {
+            console.warn('[Email] RESEND_API_KEY not set — skipping send');
             return res.json({ message: 'Email skipped (credentials not configured)', sent: false });
         }
 
-        const info = await getTransporter().sendMail({
-            from:    process.env.EMAIL_FROM || process.env.EMAIL_USER,
+        const { data, error } = await resend.emails.send({
+            from:    'PayBackPal <onboarding@resend.dev>',
             to,
             subject,
             text: body || '',
             html: html || body || '',
         });
+        
+        if (error) throw new Error(error.message);
 
-        console.log(`[Email] Sent to ${to}: ${info.messageId}`);
-        res.json({ message: 'Email sent', messageId: info.messageId, sent: true });
+        console.log(`[Email] Generic Output via Resend to ${to}: ${data.id}`);
+        res.json({ message: 'Email sent', messageId: data.id, sent: true });
     } catch (err) {
         console.error('[Email] Send error:', err.message);
         // Don't crash the app if email fails — just report
