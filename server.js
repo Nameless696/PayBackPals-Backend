@@ -112,3 +112,4 @@ app.listen(PORT, () => {
 
 module.exports = app;
 // Rebooting node instance...
+// ── Delete Account ────────────────────────────────────────────────

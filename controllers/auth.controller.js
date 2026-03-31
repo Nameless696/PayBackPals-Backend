@@ -203,3 +203,14 @@ exports.updateProfile = async (req, res, next) => {
         next(err);
     }
 };
+
+// ── Delete Account ────────────────────────────────────────────────
+exports.deleteAccount = async (req, res, next) => {
+    try {
+        const User = require('../models/User');
+        await User.findByIdAndDelete(req.user._id);
+        res.json({ message: 'Account deleted forever.' });
+    } catch (err) {
+        next(err);
+    }
+};
