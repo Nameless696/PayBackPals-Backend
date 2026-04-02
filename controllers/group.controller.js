@@ -4,20 +4,16 @@
 const Group        = require('../models/Group');
 const Expense      = require('../models/Expense');
 const Notification = require('../models/Notification');
-const nodemailer   = require('nodemailer');
+const { Resend } = require('resend');
+
+const resend = new Resend(process.env.RESEND_API_KEY || 'unconfigured_fallback_key');
 
 async function sendInviteEmail(targetEmail, groupName, inviteCode) {
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS || !targetEmail) return;
+    if (!process.env.RESEND_API_KEY || !targetEmail) return;
     try {
-        const transporter = nodemailer.createTransport({
-            host:   process.env.EMAIL_HOST || 'smtp.gmail.com',
-            port:   Number(process.env.EMAIL_PORT) || 587,
-            secure: process.env.EMAIL_SECURE === 'true',
-            auth:   { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-        });
-        await transporter.sendMail({
-            from:    process.env.EMAIL_FROM || process.env.EMAIL_USER,
-            to:      targetEmail,
+        const { data, error } = await resend.emails.send({
+            from: 'PayBackPal <onboarding@resend.dev>',
+            to: targetEmail,
             subject: `You have been fully invited to join ${groupName} on PayBackPal!`,
             html: `
                 <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#0f0f1a;color:#fff;border-radius:12px;">
@@ -31,7 +27,8 @@ async function sendInviteEmail(targetEmail, groupName, inviteCode) {
                 </div>
             `,
         });
-        console.log(`[Group] Invite sent physically to ${targetEmail}`);
+        if (error) throw new Error(error.message);
+        console.log(`[Group] Invite sent physically via Resend to ${targetEmail}: ${data.id}`);
     } catch (e) {
         console.error(`[Group] Invite email drop:`, e.message);
     }
