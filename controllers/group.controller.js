@@ -4,15 +4,23 @@
 const Group        = require('../models/Group');
 const Expense      = require('../models/Expense');
 const Notification = require('../models/Notification');
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 
-const resend = new Resend(process.env.RESEND_API_KEY || 'unconfigured_fallback_key');
+const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: {
+        user: process.env.GOOGLE_EMAIL || 'paybackpal169@gmail.com',
+        pass: process.env.GOOGLE_APP_PASSWORD || ''
+    }
+});
 
 async function sendInviteEmail(targetEmail, groupName, inviteCode) {
-    if (!process.env.RESEND_API_KEY || !targetEmail) return;
+    if (!process.env.GOOGLE_APP_PASSWORD || !targetEmail) return;
     try {
-        const { data, error } = await resend.emails.send({
-            from: 'PayBackPal <onboarding@resend.dev>',
+        const info = await transporter.sendMail({
+            from: `"PayBackPal" <${process.env.GOOGLE_EMAIL || 'paybackpal169@gmail.com'}>`,
             to: targetEmail,
             subject: `You have been fully invited to join ${groupName} on PayBackPal!`,
             html: `
@@ -27,8 +35,7 @@ async function sendInviteEmail(targetEmail, groupName, inviteCode) {
                 </div>
             `,
         });
-        if (error) throw new Error(error.message);
-        console.log(`[Group] Invite sent physically via Resend to ${targetEmail}: ${data.id}`);
+        console.log(`[Group] Invite sent physically via Nodemailer Google Relay to ${targetEmail}: ${info.messageId}`);
     } catch (e) {
         console.error(`[Group] Invite email drop:`, e.message);
     }

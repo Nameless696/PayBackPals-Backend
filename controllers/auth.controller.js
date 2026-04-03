@@ -8,10 +8,18 @@
  * PATCH /api/auth/profile
  */
 const jwt      = require('jsonwebtoken');
-const { Resend } = require('resend');
+const nodemailer = require('nodemailer');
 const User     = require('../models/User');
 
-const resend = new Resend(process.env.RESEND_API_KEY || 'unconfigured_fallback_key');
+const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: {
+        user: process.env.GOOGLE_EMAIL || 'paybackpal169@gmail.com',
+        pass: process.env.GOOGLE_APP_PASSWORD || ''
+    }
+});
 
 // ── Helper: sign JWT ──────────────────────────────────────────────
 const signToken = (id) =>
@@ -22,15 +30,16 @@ const makeCode = () => String(Math.floor(100000 + Math.random() * 900000));
 
 // ── Helper: send verification email ──────────────────────────────
 async function sendVerificationEmail(email, name, code) {
-    if (!process.env.RESEND_API_KEY) {
-        console.warn('[Auth] RESEND_API_KEY missing - skipping email');
+    if (!process.env.GOOGLE_APP_PASSWORD) {
+        console.warn('[Auth] GOOGLE_APP_PASSWORD missing - skipping email (print out instead)');
+        console.log(`>>> YOUR CODE IS: ${code} <<<`);
         return;
     }
     
     try {
-        const { data, error } = await resend.emails.send({
-            from: 'PayBackPal <onboarding@resend.dev>',
-            to: email, // Resend free tier strictly routes to verified accounts
+        const info = await transporter.sendMail({
+            from: `"PayBackPal" <${process.env.GOOGLE_EMAIL || 'paybackpal169@gmail.com'}>`,
+            to: email,
             subject: 'Your PayBackPal verification code',
             html: `
                 <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;">
@@ -43,11 +52,9 @@ async function sendVerificationEmail(email, name, code) {
                 </div>
             `,
         });
-        
-        if (error) throw new Error(error.message);
-        console.log(`[Auth] Resend Email Executed for ${email}: ${data.id}`);
+        console.log(`[Auth] Nodemailer Google Relay Executed for ${email}: ${info.messageId}`);
     } catch (err) {
-        console.error(`\n[Auth] === RESEND API FAILED ===`);
+        console.error(`\n[Auth] === NODEMAILER API FAILED ===`);
         console.error(`Error: ${err.message}`);
         console.error(`>>> YOUR CODE IS: ${code} <<<\n`);
     }
@@ -183,11 +190,12 @@ exports.getMe = async (req, res) => {
 // ── Update profile ────────────────────────────────────────────────
 exports.updateProfile = async (req, res, next) => {
     try {
-        const { name, email, password } = req.body;
+        const { name, email, password, avatar } = req.body;
         const user = await User.findById(req.user._id);
 
         if (name)  user.name  = name.trim();
         if (email) user.email = email.toLowerCase().trim();
+        if (avatar) user.avatar = avatar; // Persist Base64
         if (password) {
             if (password.length < 8) {
                 return res.status(400).json({ message: 'Password must be at least 8 characters' });
