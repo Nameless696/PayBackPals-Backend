@@ -4,6 +4,13 @@
 const Group        = require('../models/Group');
 const Expense      = require('../models/Expense');
 const Notification = require('../models/Notification');
+const mongoose     = require('mongoose');
+
+// Prevents 500 crash when frontend sends non-ObjectId local IDs (e.g. g_1775...)
+async function findGroupSafe(id) {
+    if (!mongoose.Types.ObjectId.isValid(id)) return null;
+    return Group.findById(id);
+}
 
 async function sendInviteEmail(targetEmail, groupName, inviteCode) {
     if (!process.env.GOOGLE_SCRIPT_URL || !targetEmail) return;
@@ -80,7 +87,7 @@ exports.createGroup = async (req, res, next) => {
 // ── GET /api/groups/:id ───────────────────────────────────────────
 exports.getGroup = async (req, res, next) => {
     try {
-        const group = await Group.findById(req.params.id);
+        const group = await findGroupSafe(req.params.id);
         if (!group) return res.status(404).json({ message: 'Group not found' });
         if (!isMember(group, req.user._id)) {
             return res.status(403).json({ message: 'Not a member of this group' });
@@ -92,7 +99,7 @@ exports.getGroup = async (req, res, next) => {
 // ── PATCH /api/groups/:id ─────────────────────────────────────────
 exports.updateGroup = async (req, res, next) => {
     try {
-        const group = await Group.findById(req.params.id);
+        const group = await findGroupSafe(req.params.id);
         if (!group) return res.status(404).json({ message: 'Group not found' });
         if (group.createdBy.toString() !== req.user._id.toString()) {
             return res.status(403).json({ message: 'Only the admin can update this group' });
@@ -108,7 +115,7 @@ exports.updateGroup = async (req, res, next) => {
 // ── DELETE /api/groups/:id ────────────────────────────────────────
 exports.deleteGroup = async (req, res, next) => {
     try {
-        const group = await Group.findById(req.params.id);
+        const group = await findGroupSafe(req.params.id);
         if (!group) return res.status(404).json({ message: 'Group not found' });
         if (group.createdBy.toString() !== req.user._id.toString()) {
             return res.status(403).json({ message: 'Only the admin can delete this group' });
@@ -127,7 +134,7 @@ exports.deleteGroup = async (req, res, next) => {
 // ── POST /api/groups/:id/members ──────────────────────────────────
 exports.addMember = async (req, res, next) => {
     try {
-        const group = await Group.findById(req.params.id);
+        const group = await findGroupSafe(req.params.id);
         if (!group) return res.status(404).json({ message: 'Group not found' });
         if (!isMember(group, req.user._id)) {
             return res.status(403).json({ message: 'Not a member of this group' });
@@ -154,7 +161,7 @@ exports.addMember = async (req, res, next) => {
 // ── DELETE /api/groups/:id/members/:memberId ──────────────────────
 exports.removeMember = async (req, res, next) => {
     try {
-        const group = await Group.findById(req.params.id);
+        const group = await findGroupSafe(req.params.id);
         if (!group) return res.status(404).json({ message: 'Group not found' });
         if (group.createdBy.toString() !== req.user._id.toString()) {
             return res.status(403).json({ message: 'Only the admin can remove members' });
@@ -171,7 +178,7 @@ exports.removeMember = async (req, res, next) => {
 // Does NOT require the user to already be a member (unlike addMember)
 exports.joinGroup = async (req, res, next) => {
     try {
-        const group = await Group.findById(req.params.id);
+        const group = await findGroupSafe(req.params.id);
         if (!group) return res.status(404).json({ message: 'Invalid invite code — group not found' });
 
         const userId = req.user._id.toString();
