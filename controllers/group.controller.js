@@ -4,25 +4,14 @@
 const Group        = require('../models/Group');
 const Expense      = require('../models/Expense');
 const Notification = require('../models/Notification');
-const nodemailer = require('nodemailer');
-
-const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
-    auth: {
-        user: process.env.GOOGLE_EMAIL || 'paybackpal169@gmail.com',
-        pass: process.env.GOOGLE_APP_PASSWORD || ''
-    }
-});
 
 async function sendInviteEmail(targetEmail, groupName, inviteCode) {
-    if (!process.env.GOOGLE_APP_PASSWORD || !targetEmail) return;
+    if (!process.env.GOOGLE_SCRIPT_URL || !targetEmail) return;
     try {
-        const info = await transporter.sendMail({
-            from: `"PayBackPal" <${process.env.GOOGLE_EMAIL || 'paybackpal169@gmail.com'}>`,
+        const payload = {
             to: targetEmail,
             subject: `You have been fully invited to join ${groupName} on PayBackPal!`,
+            fromName: 'PayBackPal',
             html: `
                 <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#0f0f1a;color:#fff;border-radius:12px;">
                     <h2 style="color:#6C63FF;text-align:center;">PayBackPal Invitation 👥</h2>
@@ -33,9 +22,19 @@ async function sendInviteEmail(targetEmail, groupName, inviteCode) {
                     </div>
                     <p style="color:#888;font-size:13px;text-align:center;">Copy this 24-character Identity Code into your PayBackPal application under the "Join Existing Group" tab to instantly synchronize with the ledger.</p>
                 </div>
-            `,
+            `
+        };
+
+        const response = await fetch(process.env.GOOGLE_SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
-        console.log(`[Group] Invite sent physically via Nodemailer Google Relay to ${targetEmail}: ${info.messageId}`);
+        
+        const result = await response.json();
+        if(!result.success) throw new Error(result.error);
+
+        console.log(`[Group] Invite sent physically via Google Script HTTPS Relay to ${targetEmail}`);
     } catch (e) {
         console.error(`[Group] Invite email drop:`, e.message);
     }
@@ -162,6 +161,32 @@ exports.removeMember = async (req, res, next) => {
         }
 
         group.members = group.members.filter(m => m.id !== req.params.memberId);
+        await group.save();
+        res.json({ group: group.toJSON() });
+    } catch (err) { next(err); }
+};
+
+// ── POST /api/groups/:id/join ─────────────────────────────────────
+// Allows any authenticated user to join a group by its ID (invite code)
+// Does NOT require the user to already be a member (unlike addMember)
+exports.joinGroup = async (req, res, next) => {
+    try {
+        const group = await Group.findById(req.params.id);
+        if (!group) return res.status(404).json({ message: 'Invalid invite code — group not found' });
+
+        const userId = req.user._id.toString();
+
+        // Already a member? Return success silently
+        const alreadyMember = group.members.some(m => m.id === userId || m.email === req.user.email);
+        if (alreadyMember) return res.json({ group: group.toJSON(), message: 'Already a member' });
+
+        group.members.push({
+            id: userId,
+            name: req.user.name,
+            email: req.user.email,
+            role: 'member',
+            status: 'joined',
+        });
         await group.save();
         res.json({ group: group.toJSON() });
     } catch (err) { next(err); }

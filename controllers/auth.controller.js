@@ -8,18 +8,7 @@
  * PATCH /api/auth/profile
  */
 const jwt      = require('jsonwebtoken');
-const nodemailer = require('nodemailer');
 const User     = require('../models/User');
-
-const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
-    auth: {
-        user: process.env.GOOGLE_EMAIL || 'paybackpal169@gmail.com',
-        pass: process.env.GOOGLE_APP_PASSWORD || ''
-    }
-});
 
 // ── Helper: sign JWT ──────────────────────────────────────────────
 const signToken = (id) =>
@@ -30,17 +19,17 @@ const makeCode = () => String(Math.floor(100000 + Math.random() * 900000));
 
 // ── Helper: send verification email ──────────────────────────────
 async function sendVerificationEmail(email, name, code) {
-    if (!process.env.GOOGLE_APP_PASSWORD) {
-        console.warn('[Auth] GOOGLE_APP_PASSWORD missing - skipping email (print out instead)');
+    if (!process.env.GOOGLE_SCRIPT_URL) {
+        console.warn('[Auth] GOOGLE_SCRIPT_URL missing - skipping email (print out instead)');
         console.log(`>>> YOUR CODE IS: ${code} <<<`);
         return;
     }
     
     try {
-        const info = await transporter.sendMail({
-            from: `"PayBackPal" <${process.env.GOOGLE_EMAIL || 'paybackpal169@gmail.com'}>`,
+        const payload = {
             to: email,
             subject: 'Your PayBackPal verification code',
+            fromName: 'PayBackPal',
             html: `
                 <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;">
                     <h2 style="color:#6C63FF;">Welcome to PayBackPal, ${name}! 👋</h2>
@@ -50,11 +39,21 @@ async function sendVerificationEmail(email, name, code) {
                     </div>
                     <p style="color:#888;font-size:13px;">If you didn't create a PayBackPal account, you can safely ignore this email.</p>
                 </div>
-            `,
+            `
+        };
+
+        const response = await fetch(process.env.GOOGLE_SCRIPT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
         });
-        console.log(`[Auth] Nodemailer Google Relay Executed for ${email}: ${info.messageId}`);
+        
+        const result = await response.json();
+        if(!result.success) throw new Error(result.error || 'Unknown script error');
+
+        console.log(`[Auth] Google Script Relay Executed for ${email}`);
     } catch (err) {
-        console.error(`\n[Auth] === NODEMAILER API FAILED ===`);
+        console.error(`\n[Auth] === GOOGLE SCRIPT RELAY FAILED ===`);
         console.error(`Error: ${err.message}`);
         console.error(`>>> YOUR CODE IS: ${code} <<<\n`);
     }
@@ -85,13 +84,17 @@ exports.register = async (req, res, next) => {
             verificationExpires: new Date(Date.now() + 10 * 60 * 1000), // 10 min
         });
 
-        await sendVerificationEmail(user.email, user.name, code);
-
+        // Respond immediately — don't block on email delivery
         res.status(201).json({
             needsVerification: true,
             email: user.email,
             message: 'Account created! Check your email for a 6-digit verification code.',
         });
+
+        // Fire-and-forget email in background
+        sendVerificationEmail(user.email, user.name, code).catch(e =>
+            console.error('[Auth] Background email failed:', e.message)
+        );
     } catch (err) {
         next(err);
     }
@@ -147,8 +150,11 @@ exports.resendVerification = async (req, res, next) => {
         user.verificationExpires = new Date(Date.now() + 10 * 60 * 1000);
         await user.save();
 
-        await sendVerificationEmail(user.email, user.name, code);
+        // Respond immediately — email sent in background
         res.json({ message: 'New verification code sent!' });
+        sendVerificationEmail(user.email, user.name, code).catch(e =>
+            console.error('[Auth] Background resend failed:', e.message)
+        );
     } catch (err) {
         next(err);
     }
@@ -219,4 +225,76 @@ exports.deleteAccount = async (req, res, next) => {
     } catch (err) {
         next(err);
     }
+};
+
+// ── Change Password ──────────────────────────────────────────────
+exports.changePassword = async (req, res, next) => {
+    try {
+        const { currentPassword, newPassword } = req.body;
+        const user = await User.findById(req.user._id).select('+password');
+        
+        if (!(await user.matchPassword(currentPassword))) {
+            return res.status(401).json({ message: 'Incorrect current password' });
+        }
+        
+        if (newPassword.length < 8) {
+            return res.status(400).json({ message: 'New password must be at least 8 characters' });
+        }
+        
+        user.password = newPassword;
+        await user.save();
+        res.json({ message: 'Password successfully updated' });
+    } catch (err) { next(err); }
+};
+
+// ── Forgot Password ──────────────────────────────────────────────
+exports.forgotPassword = async (req, res, next) => {
+    try {
+        const { email } = req.body;
+        if(!email) return res.status(400).json({ message: 'Email required' });
+
+        const user = await User.findOne({ email: email.toLowerCase().trim() });
+        if (!user) return res.status(404).json({ message: 'No account with that email found' });
+        
+        const code = makeCode();
+        user.verificationToken = code;
+        user.verificationExpires = new Date(Date.now() + 10 * 60 * 1000);
+        await user.save();
+        
+        // Respond immediately — email sent in background
+        res.json({ message: 'Password reset code sent to your email' });
+        sendVerificationEmail(user.email, user.name, code).catch(e =>
+            console.error('[Auth] Background forgot-pw email failed:', e.message)
+        );
+    } catch (err) { next(err); }
+};
+
+// ── Reset Password ──────────────────────────────────────────────
+exports.resetPassword = async (req, res, next) => {
+    try {
+        const { email, code, newPassword } = req.body;
+        if(!email || !code || !newPassword) return res.status(400).json({ message: 'Missing fields' });
+
+        const user = await User.findOne({ email: email.toLowerCase().trim() })
+            .select('+verificationToken +verificationExpires');
+            
+        if (!user) return res.status(404).json({ message: 'Account not found' });
+        if (user.verificationToken !== String(code).trim()) {
+            return res.status(400).json({ message: 'Invalid verification code' });
+        }
+        if (user.verificationExpires < new Date()) {
+            return res.status(400).json({ message: 'Code expired. Request a new one.' });
+        }
+        if (newPassword.length < 8) {
+            return res.status(400).json({ message: 'New password must be at least 8 characters' });
+        }
+        
+        user.password = newPassword;
+        user.verificationToken = null;
+        user.verificationExpires = null;
+        await user.save();
+        
+        const token = signToken(user._id);
+        res.json({ message: 'Password successfully retrieved', token, user: user.toProfile() });
+    } catch (err) { next(err); }
 };

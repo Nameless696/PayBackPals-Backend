@@ -9,6 +9,7 @@ const {
     deleteGroup,
     addMember,
     removeMember,
+    joinGroup,
 } = require('../controllers/group.controller');
 
 router.use(protect); // all group routes require auth
@@ -24,5 +25,6 @@ router.route('/:id')
 
 router.post  ('/:id/members',              addMember);
 router.delete('/:id/members/:memberId',    removeMember);
+router.post  ('/:id/join',                 joinGroup);  // self-join by invite code
 
 module.exports = router;
