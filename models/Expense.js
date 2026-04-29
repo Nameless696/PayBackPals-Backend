@@ -11,6 +11,8 @@ const ExpenseSchema = new mongoose.Schema(
         category:   { type: String, default: 'other' },
         paidBy:     { type: String, required: true },   // member id (string)
         splitAmong: { type: [String], default: [] },    // array of member ids
+        splitType:  { type: String, enum: ['equal', 'percentage', 'exact'], default: 'equal' },
+        splits:     [{ memberId: String, amount: Number }], // per-member amounts (used when splitType != 'equal')
         date:       { type: Date, default: Date.now },
 
         // Optional metadata

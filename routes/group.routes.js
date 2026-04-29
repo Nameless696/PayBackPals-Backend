@@ -10,6 +10,8 @@ const {
     addMember,
     removeMember,
     joinGroup,
+    exportGroupPDF,
+    sendReminders,
 } = require('../controllers/group.controller');
 
 router.use(protect); // all group routes require auth
@@ -26,5 +28,7 @@ router.route('/:id')
 router.post  ('/:id/members',              addMember);
 router.delete('/:id/members/:memberId',    removeMember);
 router.post  ('/:id/join',                 joinGroup);  // self-join by invite code
+router.get   ('/:id/report',               exportGroupPDF);
+router.post  ('/:id/reminders',            sendReminders);
 
 module.exports = router;

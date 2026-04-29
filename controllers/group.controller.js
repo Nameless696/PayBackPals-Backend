@@ -198,3 +198,148 @@ exports.joinGroup = async (req, res, next) => {
         res.json({ group: group.toJSON() });
     } catch (err) { next(err); }
 };
+
+// ── GET /api/groups/:id/report ────────────────────────────────────
+// Generate a PDF summary of the group (base64 encoded)
+exports.exportGroupPDF = async (req, res, next) => {
+    try {
+        const PDFDocument = require('pdfkit');
+        const group = await findGroupSafe(req.params.id);
+        if (!group) return res.status(404).json({ message: 'Group not found' });
+        if (!isMember(group, req.user._id)) {
+            return res.status(403).json({ message: 'Not a member of this group' });
+        }
+
+        const expenses = await Expense.find({ groupId: group._id }).sort('-date').limit(500);
+
+        // Build PDF in memory
+        const doc = new PDFDocument({ margin: 40, size: 'A4' });
+        const chunks = [];
+        doc.on('data', c => chunks.push(c));
+
+        // Header
+        doc.fontSize(22).fillColor('#6C63FF').text('PayBackPal', { align: 'center' });
+        doc.moveDown(0.3);
+        doc.fontSize(16).fillColor('#333').text(`Group Report: ${group.name}`, { align: 'center' });
+        doc.moveDown(0.2);
+        doc.fontSize(10).fillColor('#888').text(`Generated: ${new Date().toLocaleDateString()}`, { align: 'center' });
+        doc.moveDown(1);
+
+        // Members
+        doc.fontSize(13).fillColor('#333').text('Members', { underline: true });
+        doc.moveDown(0.3);
+        group.members.forEach(m => {
+            const role = m.id === group.createdBy.toString() ? ' (Admin)' : '';
+            doc.fontSize(10).fillColor('#555').text(`• ${m.name} — ${m.email || 'No email'}${role}`);
+        });
+        doc.moveDown(1);
+
+        // Summary
+        const totalAmt = expenses.filter(e => !e.isSettlement).reduce((s, e) => s + (e.amount || 0), 0);
+        const settlements = expenses.filter(e => e.isSettlement).reduce((s, e) => s + (e.amount || 0), 0);
+        doc.fontSize(13).fillColor('#333').text('Summary', { underline: true });
+        doc.moveDown(0.3);
+        doc.fontSize(10).fillColor('#555').text(`Total Expenses: ${totalAmt.toFixed(2)}`);
+        doc.text(`Total Settlements: ${settlements.toFixed(2)}`);
+        doc.text(`Expense Count: ${expenses.filter(e => !e.isSettlement).length}`);
+        doc.moveDown(1);
+
+        // Expense ledger
+        doc.fontSize(13).fillColor('#333').text('Expense Ledger', { underline: true });
+        doc.moveDown(0.3);
+        const memberMap = Object.fromEntries(group.members.map(m => [m.id, m.name]));
+        expenses.filter(e => !e.isSettlement).slice(0, 50).forEach(e => {
+            const payer = memberMap[e.paidBy] || e.paidBy;
+            const date  = e.date ? new Date(e.date).toLocaleDateString() : '';
+            doc.fontSize(9).fillColor('#555').text(
+                `${date}  |  ${e.description}  |  Paid by ${payer}  |  ${e.amount.toFixed(2)}`
+            );
+        });
+
+        doc.end();
+
+        // Wait for stream to finish then send base64
+        await new Promise(resolve => doc.on('end', resolve));
+        const pdfBuffer = Buffer.concat(chunks);
+        res.json({ pdf: pdfBuffer.toString('base64'), filename: `${group.name}_report.pdf` });
+    } catch (err) { next(err); }
+};
+
+// ── POST /api/groups/:id/reminders ────────────────────────────────
+// Admin sends debt reminder emails to all members who owe money
+exports.sendReminders = async (req, res, next) => {
+    try {
+        const group = await findGroupSafe(req.params.id);
+        if (!group) return res.status(404).json({ message: 'Group not found' });
+        if (group.createdBy.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ message: 'Only the admin can send reminders' });
+        }
+
+        if (!process.env.GOOGLE_SCRIPT_URL) {
+            return res.status(400).json({ message: 'Email service is not configured (missing GOOGLE_SCRIPT_URL)' });
+        }
+
+        const expenses = await Expense.find({ groupId: group._id });
+        const memberMap = Object.fromEntries(group.members.map(m => [m.id, m]));
+
+        // Calculate net balances
+        const net = {};
+        expenses.forEach(e => {
+            const split = Array.isArray(e.splitAmong) && e.splitAmong.length ? e.splitAmong : [e.paidBy];
+            const payer = e.paidBy;
+            if (!net[payer]) net[payer] = 0;
+
+            if (e.isSettlement) {
+                const payee = split[0];
+                if (!net[payee]) net[payee] = 0;
+                net[payer] += e.amount;
+                net[payee] -= e.amount;
+                return;
+            }
+
+            const share = e.amount / split.length;
+            split.forEach(m => {
+                if (!net[m]) net[m] = 0;
+                if (m !== payer) {
+                    net[payer] += share;
+                    net[m]     -= share;
+                }
+            });
+        });
+
+        // Find debtors (negative balance = owes money)
+        let sent = 0;
+        for (const [memberId, balance] of Object.entries(net)) {
+            if (balance < -0.01) {
+                const member = memberMap[memberId];
+                if (!member?.email) continue;
+
+                const owes = Math.abs(balance).toFixed(2);
+                try {
+                    await fetch(process.env.GOOGLE_SCRIPT_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            to: member.email,
+                            subject: `PayBackPal Reminder: You owe in "${group.name}"`,
+                            fromName: 'PayBackPal',
+                            html: `
+                                <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#0f0f1a;color:#fff;border-radius:12px;">
+                                    <h2 style="color:#6C63FF;text-align:center;">Payment Reminder 💰</h2>
+                                    <p style="color:#B8B5D1;font-size:16px;">Hi ${member.name},</p>
+                                    <p style="color:#B8B5D1;">You currently owe <strong style="color:#EF4444;">${owes}</strong> in the group <strong>"${group.name}"</strong>.</p>
+                                    <p style="color:#888;font-size:13px;">Open PayBackPal to settle your debts and stay on track!</p>
+                                </div>
+                            `
+                        })
+                    });
+                    sent++;
+                } catch (emailErr) {
+                    console.error(`[Reminder] Failed to send to ${member.email}:`, emailErr.message);
+                }
+            }
+        }
+
+        res.json({ message: `Sent ${sent} reminder(s)`, sent });
+    } catch (err) { next(err); }
+};

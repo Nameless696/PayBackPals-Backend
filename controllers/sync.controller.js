@@ -3,9 +3,11 @@
  * GET  /api/sync        → return all groups + expenses + notifications for current user
  * POST /api/sync/import → bulk import local data into MongoDB
  */
-const Group        = require('../models/Group');
-const Expense      = require('../models/Expense');
-const Notification = require('../models/Notification');
+const Group               = require('../models/Group');
+const Expense             = require('../models/Expense');
+const Notification        = require('../models/Notification');
+const PersonalTransaction = require('../models/PersonalTransaction');
+const Budget              = require('../models/Budget');
 
 // ── GET /api/sync ─────────────────────────────────────────────────
 exports.syncAll = async (req, res, next) => {
@@ -17,11 +19,15 @@ exports.syncAll = async (req, res, next) => {
 
         const expenses      = await Expense.find({ groupId: { $in: groupIds } }).sort('-date');
         const notifications = await Notification.find({ userId: req.user._id }).sort('-timestamp');
+        const personalTransactions = await PersonalTransaction.find({ userId: req.user._id }).sort('-date').limit(500);
+        const budget = await Budget.findOne({ userId: req.user._id });
 
         res.json({
             groups:        groups.map(g => g.toJSON()),
             expenses:      expenses.map(e => e.toJSON()),
             notifications: notifications.map(n => n.toJSON()),
+            personalTransactions: personalTransactions.map(t => t.toJSON()),
+            budget:        budget ? budget.toJSON() : null,
         });
     } catch (err) { next(err); }
 };

@@ -25,6 +25,7 @@ const expenseRoutes      = require('./routes/expense.routes');
 const notificationRoutes = require('./routes/notification.routes');
 const syncRoutes         = require('./routes/sync.routes');
 const emailRoutes        = require('./routes/email.routes');
+const personalRoutes     = require('./routes/personal.routes');
 
 // ── Connect to MongoDB ─────────────────────────────────────────────
 connectDB();
@@ -91,6 +92,7 @@ app.use('/api/expenses',      expenseRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/sync',          syncRoutes);
 app.use('/api/emails',        emailRoutes);
+app.use('/api/personal',      personalRoutes);
 
 // ── Health check ──────────────────────────────────────────────────
 app.get('/api/health', (req, res) =>
